@@ -1,48 +1,44 @@
-# ND BURGS — Central de Rotas
+# ND BURGS — Sistema web de gestão
 
-Repositório oficial de código-fonte e backup da Central de Rotas da ND BURGS.
+Primeira base funcional de uma plataforma própria para hamburgueria. Interface dark responsiva, API Node.js/Express e banco SQLite local.
 
-## IMPORTANTE: arquitetura atual
+## Módulos incluídos
+- Login e perfis de administrador/operador
+- Visão geral com indicadores e pedidos recentes
+- Frente de caixa com carrinho, canal, cliente, pagamento, desconto e taxa de entrega
+- Pedidos e atualização de status
+- Painel de cozinha
+- Gestão básica de delivery e atribuição de entregador
+- Cadastro de produtos
+- Estoque e movimentações
+- Despesas e visão financeira
+- Relatório resumido por mês
+- Cadastro de usuários
 
-O sistema usa `google.script.run` para login, pedidos, GPS, atualização de entregas e rastreamento. Por isso, **as telas operacionais precisam continuar sendo servidas pelo Google Apps Script**. Publicar os arquivos operacionais diretamente no GitHub Pages, sem migrar essa comunicação, faria essas funções pararem de funcionar.
+## Executar localmente
+Requer Node.js 20 ou superior.
 
-Este repositório organiza e versiona os arquivos. O GitHub Pages incluído em `/docs` pode servir como página inicial/atalho, mas não substitui o Apps Script nesta etapa.
+1. Extraia o ZIP.
+2. Abra um terminal na pasta do projeto.
+3. Execute `npm install`.
+4. Configure `JWT_SECRET` usando `.env.example` como referência (ou variável de ambiente do provedor).
+5. Execute `npm start`.
+6. Acesse `http://localhost:3000`.
 
-## Arquivos
+Primeiro acesso criado automaticamente:
+- E-mail: `admin@ndburgs.com`
+- Senha: `ndburgs123`
 
-- `apps-script/Code.gs` — backend otimizado do Apps Script.
-- `apps-script/index.html` — painel principal.
-- `apps-script/maps.html` — página de acompanhamento do cliente, com status atual piscando em vermelho e etapas concluídas em verde.
-- `docs/index.html` — página inicial simples para GitHub Pages.
+**Troque a senha inicial e configure uma chave JWT forte antes de colocar o sistema na internet.** Não use credenciais de demonstração em produção.
 
-## Como colocar no GitHub
+## Banco de dados
+O arquivo `data/ndburgs.sqlite` é criado automaticamente na primeira execução. Faça backup regular dessa pasta. O SQLite é adequado para iniciar e testar em uma instância única; para múltiplas instâncias/escala, migre para PostgreSQL.
 
-1. Entre em https://github.com e crie um repositório chamado `ndburgs-central-rotas`.
-2. Deixe o repositório **Private** se não quiser expor o código e configurações internas.
-3. Clique em **Add file → Upload files**.
-4. Envie todos os arquivos e pastas deste pacote, mantendo a estrutura (`apps-script` e `docs`).
-5. Clique em **Commit changes**.
+## Antes de operar de verdade
+Esta é uma primeira versão funcional, não um PDV fiscal certificado. Ainda precisam ser implementados/testados conforme a operação real: integração com impressoras, emissão fiscal, integração de pagamentos, WhatsApp, ficha técnica com baixa automática de ingredientes, contas recorrentes, permissões granulares, trilha de auditoria, backup automatizado e testes de carga/segurança. O módulo de motoboys ainda é uma gestão básica de atribuição/status, não um aplicativo GPS em tempo real.
 
-## GitHub Pages (opcional)
-
-A pasta `/docs` contém apenas uma página inicial/atalho; ela **não hospeda o painel operacional**. Não ative o Pages nem torne o repositório público por enquanto. O código atual contém configurações de acesso e deve ficar em repositório **Private**. Depois de revisar e proteger credenciais, podemos decidir se vale publicar uma página pública separada.
-
-Se futuramente for habilitar o Pages, edite `docs/index.html` e substitua `COLE_AQUI_A_URL_DO_APP_SCRIPT` pelo endereço publicado do Web App. A disponibilidade do Pages para repositórios privados depende do plano do GitHub.
-
-## Atualizar o Apps Script
-
-O GitHub não atualiza automaticamente o projeto Apps Script. Para publicar uma atualização:
-
-1. Abra o projeto no Apps Script.
-2. Copie o conteúdo de `apps-script/Code.gs` para o arquivo `Code.gs`.
-3. Copie `apps-script/index.html` para o arquivo HTML principal usado pelo `doGet`.
-4. Atualize a página de acompanhamento com `apps-script/maps.html` conforme a rota/link que seu projeto já utiliza.
-5. Salve, teste e só então publique uma nova versão do Web App.
-
-**Não apague o projeto Apps Script nem altere as permissões da implantação atual durante esta etapa.** Faça backup antes de substituir arquivos.
-
-## Segurança
-
-- Não coloque PINs, tokens, chaves privadas ou credenciais em páginas públicas.
-- Se o repositório for público, revise o código antes de enviar.
-- O GitHub Pages é público mesmo quando o projeto tem informações que você não deseja divulgar; mantenha o repositório privado quando necessário.
+## Segurança e implantação
+- Hospede em serviço que mantenha processo Node e disco persistente (por exemplo, VPS ou plataforma com volume persistente).
+- Configure HTTPS, `JWT_SECRET` forte, backup e política de acesso.
+- O SQLite não deve ficar em diretório público.
+- Não exponha o banco ou credenciais.
