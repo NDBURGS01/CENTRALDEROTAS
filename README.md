@@ -42,3 +42,19 @@ Esta é uma primeira versão funcional, não um PDV fiscal certificado. Ainda pr
 - Configure HTTPS, `JWT_SECRET` forte, backup e política de acesso.
 - O SQLite não deve ficar em diretório público.
 - Não exponha o banco ou credenciais.
+
+
+## Aplicativo instalável e notificações push
+
+A interface servida pelo Express fica em `public/`. O projeto inclui manifest e Service Worker para instalação como PWA. A instalação exige HTTPS (ou localhost).
+
+### Configurar push no servidor
+
+1. Gere um par de chaves VAPID em ambiente seguro com `npx web-push generate-vapid-keys`.
+2. Cadastre na hospedagem `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` (ex.: `mailto:seu-email@dominio.com`).
+3. Mantenha `JWT_SECRET` forte e configure disco/volume persistente para a pasta `data` (o SQLite fica nela).
+4. Faça deploy com `npm install` e `npm start`.
+
+Após entrar pelo celular, toque em **Ativar notificações** e autorize o navegador. O servidor envia avisos de pedido novo e alteração de status aos aparelhos inscritos. Sem VAPID e HTTPS, a instalação PWA funciona, mas o push não será enviado.
+
+No iPhone/iPad, adicione primeiro à Tela de Início pelo Safari; depois abra o ícone instalado e ative as notificações. O push no iOS exige versão compatível.
