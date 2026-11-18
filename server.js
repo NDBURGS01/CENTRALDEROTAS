@@ -4,11 +4,17 @@ const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const webpush = require('web-push');
 const Database = require('better-sqlite3');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'TROQUE-ESTA-CHAVE-ANTES-DE-PUBLICAR-' + crypto.randomBytes(24).toString('hex');
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:suporte@ndburgs.com';
+const PUSH_READY = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+if (PUSH_READY) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 const DATA_DIR = path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(path.join(DATA_DIR, 'ndburgs.sqlite'));
@@ -58,6 +64,11 @@ CREATE TABLE IF NOT EXISTS expenses (
  amount REAL NOT NULL, due_date TEXT DEFAULT '', paid INTEGER NOT NULL DEFAULT 0,
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, endpoint TEXT NOT NULL UNIQUE,
+ p256dh TEXT NOT NULL, auth TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 `);
 
 const count = db.prepare('SELECT COUNT(*) n FROM users').get().n;
@@ -89,6 +100,16 @@ function admin(req,res,next){ if(req.user.role!=='admin') return res.status(403)
 function num(v){ const n=Number(v); return Number.isFinite(n)?n:0; }
 function today(){ return new Date().toISOString().slice(0,10); }
 
+async function notifyPush(payload, userId=null) {
+ if (!PUSH_READY) return;
+ const rows = userId ? db.prepare('SELECT id,endpoint,p256dh,auth FROM push_subscriptions WHERE user_id=?').all(userId) : db.prepare('SELECT id,endpoint,p256dh,auth FROM push_subscriptions').all();
+ const message = JSON.stringify({title:payload.title||'ND BURGS',body:payload.body||'Há uma atualização na operação.',url:payload.url||'/',tag:payload.tag||'ndburgs-update'});
+ await Promise.all(rows.map(async row => {
+  try { await webpush.sendNotification({endpoint:row.endpoint,keys:{p256dh:row.p256dh,auth:row.auth}},message,{TTL:3600}); }
+  catch(err) { if(err.statusCode===404||err.statusCode===410) db.prepare('DELETE FROM push_subscriptions WHERE id=?').run(row.id); else console.error('Falha ao enviar push:',err.statusCode||err.message); }
+ }));
+}
+
 app.post('/api/login',(req,res)=>{
  const {email,password}=req.body||{};
  const user=db.prepare('SELECT * FROM users WHERE lower(email)=lower(?) AND active=1').get(String(email||'').trim());
@@ -97,6 +118,21 @@ app.post('/api/login',(req,res)=>{
  res.json({token,user:{id:user.id,name:user.name,email:user.email,role:user.role}});
 });
 app.get('/api/me',auth,(req,res)=>res.json({user:req.user}));
+app.get('/api/push/public-key',auth,(req,res)=>{ if(!PUSH_READY) return res.status(503).json({error:'Notificações ainda não configuradas no servidor. Configure as chaves VAPID.'}); res.json({publicKey:VAPID_PUBLIC_KEY}); });
+app.post('/api/push/subscribe',auth,(req,res)=>{
+ const s=req.body||{}, keys=s.keys||{};
+ if(!PUSH_READY) return res.status(503).json({error:'Notificações ainda não configuradas no servidor.'});
+ if(!String(s.endpoint||'').startsWith('https://')||!keys.p256dh||!keys.auth) return res.status(400).json({error:'Assinatura de notificações inválida.'});
+ db.prepare(`INSERT INTO push_subscriptions(user_id,endpoint,p256dh,auth) VALUES(?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id,p256dh=excluded.p256dh,auth=excluded.auth`).run(req.user.id,s.endpoint,keys.p256dh,keys.auth);
+ res.json({ok:true});
+});
+app.post('/api/push/unsubscribe',auth,(req,res)=>{const endpoint=String((req.body||{}).endpoint||'');if(endpoint)db.prepare('DELETE FROM push_subscriptions WHERE endpoint=? AND user_id=?').run(endpoint,req.user.id);res.json({ok:true});});
+app.post('/api/push/test',auth,async(req,res)=>{
+ if(!PUSH_READY)return res.status(503).json({error:'Configure as chaves VAPID no servidor para testar as notificações.'});
+ const count=db.prepare('SELECT COUNT(*) n FROM push_subscriptions WHERE user_id=?').get(req.user.id).n;
+ if(!count)return res.status(400).json({error:'Ative as notificações neste celular primeiro.'});
+ await notifyPush({title:'ND BURGS • Teste',body:'Notificações ativadas neste aparelho!',url:'/',tag:'ndburgs-test'},req.user.id);res.json({ok:true});
+});
 app.get('/api/dashboard',auth,(req,res)=>{
  const sales=db.prepare("SELECT COALESCE(SUM(total),0) total,COUNT(*) orders FROM orders WHERE date(created_at)=date('now','localtime') AND status!='cancelado'").get();
  const open=db.prepare("SELECT COUNT(*) n FROM orders WHERE status NOT IN ('entregue','cancelado')").get().n;
@@ -135,12 +171,14 @@ app.post('/api/orders',auth,(req,res)=>{
   normalized.forEach(i=>add.run(info.lastInsertRowid,i.product.id,i.product.name,i.q,i.price,i.q*i.price));
   return info.lastInsertRowid;
  });
- try { const id=create(); res.json({id,code,total}); } catch(e){res.status(400).json({error:e.message});}
+ try { const id=create(); notifyPush({title:'ATENÇÃO • PEDIDO NOVO ND',body:`${code} · ${String(p.customer_name||'Cliente balcão')} · R$ ${total.toFixed(2).replace('.',',')}`,url:'/',tag:'ndburgs-new-order'}).catch(err=>console.error('Push pedido:',err)); res.json({id,code,total}); } catch(e){res.status(400).json({error:e.message});}
 });
 app.patch('/api/orders/:id/status',auth,(req,res)=>{
  const allowed=['novo','preparando','pronto','saiu_entrega','entregue','cancelado'];
  if(!allowed.includes(req.body.status)) return res.status(400).json({error:'Status inválido.'});
+ const order=db.prepare('SELECT code,customer_name FROM orders WHERE id=?').get(req.params.id);
  db.prepare('UPDATE orders SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(req.body.status,req.params.id);
+ if(order) notifyPush({title:'ND BURGS • Pedido atualizado',body:`${order.code} · ${order.customer_name} · ${req.body.status.replace('_',' ')}`,url:'/',tag:`ndburgs-order-${req.params.id}`}).catch(err=>console.error('Push status:',err));
  res.json({ok:true});
 });
 app.patch('/api/orders/:id/driver',auth,(req,res)=>{
@@ -179,5 +217,8 @@ app.post('/api/users',auth,admin,(req,res)=>{
  try{const info=db.prepare('INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)').run(p.name,p.email,bcrypt.hashSync(p.password,10),p.role==='admin'?'admin':'operator');res.json({id:info.lastInsertRowid});}catch(e){res.status(400).json({error:'E-mail já cadastrado.'});}
 });
 app.get('/api/health',(req,res)=>res.json({ok:true,app:'ND BURGS',time:new Date().toISOString()}));
+app.get('/icon-192.png',(req,res)=>res.sendFile(path.join(__dirname,'icon-192.png')));
+app.get('/icon-512.png',(req,res)=>res.sendFile(path.join(__dirname,'icon-512.png')));
+app.get('/icon.svg',(req,res)=>res.sendFile(path.join(__dirname,'icon.svg')));
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
 app.listen(PORT,()=>console.log(`ND BURGS disponível em http://localhost:${PORT}`));
